@@ -126,7 +126,6 @@
             <groupId>org.anarres.lzo</groupId>
             <artifactId>lzo-hadoop</artifactId>
             <version>1.0.5</version>
-            <scope>test</scope>
             <exclusions>
                 <exclusion>
                     <groupId>org.apache.hadoop</groupId>

@@ -14,74 +14,69 @@
 package io.airlift.compress.lzo;
 
 import io.airlift.compress.Compressor;
+import org.apache.hadoop.conf.Configuration;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 
 import static io.airlift.compress.lzo.LzoRawCompressor.MAX_TABLE_SIZE;
-import static io.airlift.compress.lzo.UnsafeUtil.getAddress;
-import static sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET;
 
 /**
  * This class is not thread-safe
+ * FIXME: for now, this class is a wrapper around the HadoopLzoCompressor and use native lzo under the hood.
  */
 public class LzoCompressor
-    implements Compressor
+        implements Compressor
 {
     private final int[] table = new int[MAX_TABLE_SIZE];
+    private final com.hadoop.compression.lzo.LzoCodec codec;
+    private static final Configuration HADOOP_CONF = new Configuration();
+    private final org.apache.hadoop.io.compress.Compressor compressor;
+
+    public LzoCompressor()
+    {
+        codec = new com.hadoop.compression.lzo.LzoCodec();
+        codec.setConf(HADOOP_CONF);
+        compressor = codec.createCompressor();
+    }
 
     @Override
     public int maxCompressedLength(int uncompressedSize)
     {
-        return LzoRawCompressor.maxCompressedLength(uncompressedSize);
+        return uncompressedSize + (uncompressedSize / 16) + 64 + 3;
     }
 
     @Override
     public int compress(byte[] input, int inputOffset, int inputLength, byte[] output, int outputOffset, int maxOutputLength)
     {
-        long inputAddress = ARRAY_BYTE_BASE_OFFSET + inputOffset;
-        long outputAddress = ARRAY_BYTE_BASE_OFFSET + outputOffset;
+        compressor.reset();
+        compressor.setInput(input, inputOffset, inputLength);
+        compressor.finish();
 
-        return LzoRawCompressor.compress(input, inputAddress, inputLength, output, outputAddress, maxOutputLength, table);
+        int offset = outputOffset;
+        int outputLimit = outputOffset + maxOutputLength;
+        while (!compressor.finished() && offset < outputLimit) {
+            try {
+                offset += compressor.compress(output, offset, outputLimit - offset);
+            }
+            catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        if (!compressor.finished()) {
+            throw new RuntimeException("not enough space in output buffer");
+        }
+
+        return offset - outputOffset;
     }
 
     @Override
     public void compress(ByteBuffer input, ByteBuffer output)
     {
-        Object inputBase;
-        long inputAddress;
-        long inputLimit;
-        if (input.isDirect()) {
-            inputBase = null;
-            long address = getAddress(input);
-            inputAddress = address + input.position();
-            inputLimit = address + input.limit();
-        }
-        else if (input.hasArray()) {
-            inputBase = input.array();
-            inputAddress = ARRAY_BYTE_BASE_OFFSET + input.arrayOffset() + input.position();
-            inputLimit = ARRAY_BYTE_BASE_OFFSET + input.arrayOffset() + input.limit();
-        }
-        else {
-            throw new IllegalArgumentException("Unsupported input ByteBuffer implementation " + input.getClass().getName());
-        }
-
-        Object outputBase;
-        long outputAddress;
-        long outputLimit;
-        if (output.isDirect()) {
-            outputBase = null;
-            long address = getAddress(output);
-            outputAddress = address + output.position();
-            outputLimit = address + output.limit();
-        }
-        else if (output.hasArray()) {
-            outputBase = output.array();
-            outputAddress = ARRAY_BYTE_BASE_OFFSET + output.arrayOffset() + output.position();
-            outputLimit = ARRAY_BYTE_BASE_OFFSET + output.arrayOffset() + output.limit();
-        }
-        else {
-            throw new IllegalArgumentException("Unsupported output ByteBuffer implementation " + output.getClass().getName());
-        }
+        byte[] in = new byte[input.remaining()];
+        input.get(in);
+        byte[] out = new byte[output.remaining()];
 
         // HACK: Assure JVM does not collect Slice wrappers while compressing, since the
         // collection may trigger freeing of the underlying memory resulting in a segfault
@@ -89,15 +84,14 @@ public class LzoCompressor
         // collected in a block, and technically, the JVM is allowed to eliminate these locks.
         synchronized (input) {
             synchronized (output) {
-                int written = LzoRawCompressor.compress(
-                        inputBase,
-                        inputAddress,
-                        (int) (inputLimit - inputAddress),
-                        outputBase,
-                        outputAddress,
-                        outputLimit - outputAddress,
-                        table);
-                output.position(output.position() + written);
+                int written = compress(
+                        in,
+                        0,
+                        in.length,
+                        out,
+                        0,
+                        out.length);
+                output.put(out, 0, written);
             }
         }
     }
