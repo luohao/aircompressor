@@ -22,24 +22,27 @@ import org.anarres.lzo.hadoop.codec.LzoDecompressor.CompressionStrategy;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 public class HadoopLzoDecompressor
         implements Decompressor
 {
     static {
         HadoopNative.requireHadoopNative();
     }
-
+    private static final int maxOutputBufferSize = 128 * 1024 * 1024;
     private final org.apache.hadoop.io.compress.Decompressor decompressor;
 
     public HadoopLzoDecompressor()
     {
-        decompressor = new LzoDecompressor(CompressionStrategy.LZO1X, 128 * 1024 * 1024);
+        decompressor = new LzoDecompressor(CompressionStrategy.LZO1X, maxOutputBufferSize);
     }
 
     @Override
     public int decompress(byte[] input, int inputOffset, int inputLength, byte[] output, int outputOffset, int maxOutputLength)
             throws MalformedInputException
     {
+        checkArgument(inputLength < maxOutputBufferSize, "input size " + inputLength + " exceed maximum size : " + maxOutputLength);
         // nothing decompress to nothing
         if (inputLength == 0) {
             return 0;
