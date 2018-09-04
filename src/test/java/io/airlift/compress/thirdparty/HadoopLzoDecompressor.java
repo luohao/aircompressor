@@ -30,7 +30,7 @@ public class HadoopLzoDecompressor
     static {
         HadoopNative.requireHadoopNative();
     }
-    private static final int maxOutputBufferSize = 128 * 1024 * 1024;
+    private static final int maxOutputBufferSize = 16 * 1024 * 1024;
     private final org.apache.hadoop.io.compress.Decompressor decompressor;
 
     public HadoopLzoDecompressor()
